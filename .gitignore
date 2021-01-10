@@ -1,6 +1,10 @@
-kube-state-metrics
+/kube-state-metrics
 documented_metrics
-tested_metrics
+code_metrics
+
+# E2e tests output
+/log
+*.bak
 
 # Created by https://www.gitignore.io/api/go
 
@@ -9,6 +13,7 @@ tested_metrics
 *.o
 *.a
 *.so
+vendor
 
 # Folders
 _obj
@@ -32,3 +37,9 @@ _testmain.go
 
 *.iml
 .idea/
+
+# Generated CLI help file
+help.txt
+
+# jsonnet dependency management
+/scripts/vendor

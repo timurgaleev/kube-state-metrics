@@ -17,28 +17,32 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"strconv"
-	"strings"
+	"time"
 
-	"github.com/golang/glog"
-	"github.com/openshift/origin/pkg/util/proc"
+	"github.com/oklog/run"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"k8s.io/client-go/informers"
+	"github.com/prometheus/common/version"
+	vpaclientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
 	clientset "k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 
-	kcollectors "k8s.io/kube-state-metrics/pkg/collectors"
-	"k8s.io/kube-state-metrics/pkg/metrics"
-	"k8s.io/kube-state-metrics/pkg/options"
-	"k8s.io/kube-state-metrics/pkg/version"
+	"k8s.io/kube-state-metrics/v2/internal/store"
+	"k8s.io/kube-state-metrics/v2/pkg/allowdenylist"
+	"k8s.io/kube-state-metrics/v2/pkg/metricshandler"
+	"k8s.io/kube-state-metrics/v2/pkg/options"
+	"k8s.io/kube-state-metrics/v2/pkg/util/proc"
 )
 
 const (
@@ -50,20 +54,22 @@ const (
 type promLogger struct{}
 
 func (pl promLogger) Println(v ...interface{}) {
-	glog.Error(v)
+	klog.Error(v...)
 }
 
 func main() {
 	opts := options.NewOptions()
 	opts.AddFlags()
 
+	ctx := context.Background()
+
 	err := opts.Parse()
 	if err != nil {
-		glog.Fatalf("Error: %s", err)
+		klog.Fatalf("Error: %s", err)
 	}
 
 	if opts.Version {
-		fmt.Printf("%#v\n", version.GetVersion())
+		fmt.Printf("%s\n", version.Print("kube-state-metrics"))
 		os.Exit(0)
 	}
 
@@ -71,96 +77,174 @@ func main() {
 		opts.Usage()
 		os.Exit(0)
 	}
+	storeBuilder := store.NewBuilder()
 
-	var collectors options.CollectorSet
-	if len(opts.Collectors) == 0 {
-		glog.Info("Using default collectors")
-		collectors = options.DefaultCollectors
+	ksmMetricsRegistry := prometheus.NewRegistry()
+	ksmMetricsRegistry.MustRegister(version.NewCollector("kube_state_metrics"))
+	durationVec := promauto.With(ksmMetricsRegistry).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:        "http_request_duration_seconds",
+			Help:        "A histogram of requests for kube-state-metrics metrics handler.",
+			Buckets:     prometheus.DefBuckets,
+			ConstLabels: prometheus.Labels{"handler": "metrics"},
+		}, []string{"method"},
+	)
+	storeBuilder.WithMetrics(ksmMetricsRegistry)
+
+	var resources []string
+	if len(opts.Resources) == 0 {
+		klog.Info("Using default resources")
+		resources = options.DefaultResources.AsSlice()
 	} else {
-		collectors = opts.Collectors
+		klog.Infof("Using resources %s", opts.Resources.String())
+		resources = opts.Resources.AsSlice()
 	}
 
-	var namespaces options.NamespaceList
+	if err := storeBuilder.WithEnabledResources(resources); err != nil {
+		klog.Fatalf("Failed to set up resources: %v", err)
+	}
+
 	if len(opts.Namespaces) == 0 {
-		namespaces = options.DefaultNamespaces
+		klog.Info("Using all namespace")
+		storeBuilder.WithNamespaces(options.DefaultNamespaces)
 	} else {
-		namespaces = opts.Namespaces
+		if opts.Namespaces.IsAllNamespaces() {
+			klog.Info("Using all namespace")
+		} else {
+			klog.Infof("Using %s namespaces", opts.Namespaces)
+		}
+		storeBuilder.WithNamespaces(opts.Namespaces)
 	}
 
-	if namespaces.IsAllNamespaces() {
-		glog.Info("Using all namespace")
-	} else {
-		glog.Infof("Using %s namespaces", namespaces)
+	allowDenyList, err := allowdenylist.New(opts.MetricAllowlist, opts.MetricDenylist)
+	if err != nil {
+		klog.Fatal(err)
 	}
 
-	if opts.MetricWhitelist.IsEmpty() && opts.MetricBlacklist.IsEmpty() {
-		glog.Info("No metric whitelist or blacklist set. No filtering of metrics will be done.")
+	err = allowDenyList.Parse()
+	if err != nil {
+		klog.Fatalf("error initializing the allowdeny list : %v", err)
 	}
-	if !opts.MetricWhitelist.IsEmpty() && !opts.MetricBlacklist.IsEmpty() {
-		glog.Fatal("Whitelist and blacklist are both set. They are mutually exclusive, only one of them can be set.")
-	}
-	if !opts.MetricWhitelist.IsEmpty() {
-		glog.Infof("A metric whitelist has been configured. Only the following metrics will be exposed: %s.", opts.MetricWhitelist.String())
-	}
-	if !opts.MetricBlacklist.IsEmpty() {
-		glog.Infof("A metric blacklist has been configured. The following metrics will not be exposed: %s.", opts.MetricBlacklist.String())
-	}
+
+	klog.Infof("metric allow-denylisting: %v", allowDenyList.Status())
+
+	storeBuilder.WithAllowDenyList(allowDenyList)
+
+	storeBuilder.WithGenerateStoreFunc(storeBuilder.DefaultGenerateStoreFunc())
 
 	proc.StartReaper()
 
-	kubeClient, err := createKubeClient(opts.Apiserver, opts.Kubeconfig)
+	kubeClient, vpaClient, err := createKubeClient(opts.Apiserver, opts.Kubeconfig)
 	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
+		klog.Fatalf("Failed to create client: %v", err)
+	}
+	storeBuilder.WithKubeClient(kubeClient)
+	storeBuilder.WithVPAClient(vpaClient)
+	storeBuilder.WithSharding(opts.Shard, opts.TotalShards)
+	storeBuilder.WithAllowLabels(opts.LabelsAllowList)
+
+	ksmMetricsRegistry.MustRegister(
+		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		prometheus.NewGoCollector(),
+	)
+
+	var g run.Group
+
+	m := metricshandler.New(
+		opts,
+		kubeClient,
+		storeBuilder,
+		opts.EnableGZIPEncoding,
+	)
+	// Run MetricsHandler
+	{
+		ctxMetricsHandler, cancel := context.WithCancel(ctx)
+		g.Add(func() error {
+			return m.Run(ctxMetricsHandler)
+		}, func(error) {
+			cancel()
+		})
 	}
 
-	ksmMetricsRegistry := prometheus.NewRegistry()
-	ksmMetricsRegistry.Register(kcollectors.ResourcesPerScrapeMetric)
-	ksmMetricsRegistry.Register(kcollectors.ScrapeErrorTotalMetric)
-	ksmMetricsRegistry.Register(prometheus.NewProcessCollector(os.Getpid(), ""))
-	ksmMetricsRegistry.Register(prometheus.NewGoCollector())
-	go telemetryServer(ksmMetricsRegistry, opts.TelemetryHost, opts.TelemetryPort)
+	telemetryMux := buildTelemetryServer(ksmMetricsRegistry)
+	telemetryServer := http.Server{Handler: telemetryMux}
+	telemetryListenAddress := net.JoinHostPort(opts.TelemetryHost, strconv.Itoa(opts.TelemetryPort))
+	telemetryLn, err := net.Listen("tcp", telemetryListenAddress)
+	if err != nil {
+		klog.Fatalf("Failed to create Telemetry Listener: %v", err)
+	}
+	metricsMux := buildMetricsServer(m, durationVec)
+	metricsServer := http.Server{Handler: metricsMux}
+	metricsServerListenAddress := net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port))
+	metricsServerLn, err := net.Listen("tcp", metricsServerListenAddress)
+	if err != nil {
+		klog.Fatalf("Failed to create MetricsServer Listener: %v", err)
+	}
 
-	registry := prometheus.NewRegistry()
-	registerCollectors(registry, kubeClient, collectors, namespaces, opts)
-	metricsServer(metrics.FilteredGatherer(registry, opts.MetricWhitelist, opts.MetricBlacklist), opts.Host, opts.Port)
+	// Run Telemetry server
+	{
+		g.Add(func() error {
+			klog.Infof("Starting kube-state-metrics self metrics server: %s", telemetryListenAddress)
+			return telemetryServer.Serve(telemetryLn)
+		}, func(error) {
+			ctxShutDown, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			telemetryServer.Shutdown(ctxShutDown)
+		})
+	}
+	// Run Metrics server
+	{
+		g.Add(func() error {
+			klog.Infof("Starting metrics server: %s", metricsServerListenAddress)
+			return metricsServer.Serve(metricsServerLn)
+		}, func(error) {
+			ctxShutDown, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			metricsServer.Shutdown(ctxShutDown)
+		})
+	}
+
+	if err := g.Run(); err != nil {
+		klog.Fatalf("RunGroup Error: %v", err)
+	}
+	klog.Info("Exiting")
 }
 
-func createKubeClient(apiserver string, kubeconfig string) (clientset.Interface, error) {
+func createKubeClient(apiserver string, kubeconfig string) (clientset.Interface, vpaclientset.Interface, error) {
 	config, err := clientcmd.BuildConfigFromFlags(apiserver, kubeconfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	config.UserAgent = version.GetVersion().String()
+	config.UserAgent = version.Version
 	config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
 	config.ContentType = "application/vnd.kubernetes.protobuf"
 
 	kubeClient, err := clientset.NewForConfig(config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	vpaClient, err := vpaclientset.NewForConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
 	// Informers don't seem to do a good job logging error messages when it
 	// can't reach the server, making debugging hard. This makes it easier to
 	// figure out if apiserver is configured incorrectly.
-	glog.Infof("Testing communication with server")
+	klog.Infof("Testing communication with server")
 	v, err := kubeClient.Discovery().ServerVersion()
 	if err != nil {
-		return nil, fmt.Errorf("ERROR communicating with apiserver: %v", err)
+		return nil, nil, errors.Wrap(err, "error while trying to communicate with apiserver")
 	}
-	glog.Infof("Running with Kubernetes cluster version: v%s.%s. git version: %s. git tree state: %s. commit: %s. platform: %s",
+	klog.Infof("Running with Kubernetes cluster version: v%s.%s. git version: %s. git tree state: %s. commit: %s. platform: %s",
 		v.Major, v.Minor, v.GitVersion, v.GitTreeState, v.GitCommit, v.Platform)
-	glog.Infof("Communication with server successful")
+	klog.Infof("Communication with server successful")
 
-	return kubeClient, nil
+	return kubeClient, vpaClient, nil
 }
 
-func telemetryServer(registry prometheus.Gatherer, host string, port int) {
-	// Address to listen on for web interface and telemetry
-	listenAddress := net.JoinHostPort(host, strconv.Itoa(port))
-
-	glog.Infof("Starting kube-state-metrics self metrics server: %s", listenAddress)
-
+func buildTelemetryServer(registry prometheus.Gatherer) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Add metricsPath
@@ -177,29 +261,25 @@ func telemetryServer(registry prometheus.Gatherer, host string, port int) {
              </body>
              </html>`))
 	})
-	log.Fatal(http.ListenAndServe(listenAddress, mux))
+	return mux
 }
 
-func metricsServer(registry prometheus.Gatherer, host string, port int) {
-	// Address to listen on for web interface and telemetry
-	listenAddress := net.JoinHostPort(host, strconv.Itoa(port))
-
-	glog.Infof("Starting metrics server: %s", listenAddress)
-
+func buildMetricsServer(m *metricshandler.MetricsHandler, durationObserver prometheus.ObserverVec) *http.ServeMux {
 	mux := http.NewServeMux()
 
+	// TODO: This doesn't belong into serveMetrics
 	mux.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
 	mux.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
 	mux.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	mux.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
 	mux.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
 
-	// Add metricsPath
-	mux.Handle(metricsPath, promhttp.HandlerFor(registry, promhttp.HandlerOpts{ErrorLog: promLogger{}}))
+	mux.Handle(metricsPath, promhttp.InstrumentHandlerDuration(durationObserver, m))
+
 	// Add healthzPath
 	mux.HandleFunc(healthzPath, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.Write([]byte("ok"))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
 	// Add index
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -214,29 +294,5 @@ func metricsServer(registry prometheus.Gatherer, host string, port int) {
              </body>
              </html>`))
 	})
-	log.Fatal(http.ListenAndServe(listenAddress, mux))
-}
-
-// registerCollectors creates and starts informers and initializes and
-// registers metrics for collection.
-func registerCollectors(registry prometheus.Registerer, kubeClient clientset.Interface, enabledCollectors options.CollectorSet, namespaces options.NamespaceList, opts *options.Options) {
-	informerFactories := []informers.SharedInformerFactory{}
-	for _, ns := range namespaces {
-		informerFactories = append(
-			informerFactories,
-			informers.NewSharedInformerFactoryWithOptions(
-				kubeClient, 0, informers.WithNamespace(ns),
-			),
-		)
-	}
-	activeCollectors := []string{}
-	for c := range enabledCollectors {
-		f, ok := kcollectors.AvailableCollectors[c]
-		if ok {
-			f(registry, informerFactories, opts)
-			activeCollectors = append(activeCollectors, c)
-		}
-	}
-
-	glog.Infof("Active collectors: %s", strings.Join(activeCollectors, ","))
+	return mux
 }
