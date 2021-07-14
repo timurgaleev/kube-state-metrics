@@ -1,3 +1,45 @@
+## v2.1.0 / 2021-06-04
+
+* [CHANGE] Update go version and dependencies #1493
+
+## v2.1.0-rc.0 / 2021-05-20
+
+* [FEATURE] Add support for native TLS #1354
+* [FEATURE] Add wildcard option to metric-labels-allowlist #1403
+* [FEATURE] Add build info metric #1332
+* [CHANGE] Add "uid" label to every pod metric #1304
+* [CHANGE] Add resourceVersion to CronJob metrics #1447
+* [CHANGE] Update go version and dependencies #1474
+* [CHANGE] Bump client-go and friends to v0.21 (Kubernetes v1.21) #1463
+* [CHANGE] Replace deprecated use of ioutil #1458
+* [BUGFIX] Fix builder.Builder WithMetrics signature #1455
+* [BUGFIX] Fix pod-metric missing reasons #1287
+* [BUGFIX] Fix multiListWatch resourceVersion mismatch if watch reconnected #1377
+
+## v2.0.0 / 2021-04-13
+
+* [CHANGE] Update go version and dependencies #1440
+
+## v2.0.0-rc.1 / 2021-03-26
+
+* [CHANGE] Rename --labels-metric-allow-list to --metric-labels-allowlist #1424
+* [CHANGE] Remove deprecated Kubernetes APIs #1423
+* [CHANGE] go.mod: Update Dependencies #1419
+* [CHANGE] Remove vendor folder #1419
+* [CHANGE] `k8s.gcr.io/kube-state-metrics/kube-state-metrics` becomes the authoritative registry
+Location on quay.io will not be updated anymore. Previously pushed images will be kept around to avoid breaking existing deployments.
+
+## v2.0.0-rc.0 / 2021-03-04
+
+* [CHANGE] internal/store/pod.go: Only create waiting_reason series if pods are in waiting state #1378
+* [CHANGE] internal/store/pod.go: Only create terminated_reason series if pods are in terminated state #1381
+* [CHANGE] internal/store/pod.go: Only create last_terminated containers series if containers are terminated state #1397
+* [FEATURE] Bump client-go and friends to v0.20 (kubernetes v1.20) #1328
+* [FEATURE] Bump go version to 1.16+ #1399
+* [BUGFIX] Fix gzip writer #1372
+* [BUGFIX] fix labels-metric-allow-list documentation #1404
+* [BUGFIX] Propagate resource version when sharded #1402
+
 ## v2.0.0-beta / 2020-12-04
 Promotion to beta release after a period of no bugs.
 

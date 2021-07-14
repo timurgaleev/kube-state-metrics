@@ -130,12 +130,15 @@ func (n *NamespaceList) Type() string {
 	return "string"
 }
 
+// LabelWildcard allowlists any label
+const LabelWildcard = "*"
+
 // LabelsAllowList represents a list of allowed labels for metrics.
 type LabelsAllowList map[string][]string
 
 // Set converts a comma-separated string of resources and their allowed Kubernetes labels and appends to the LabelsAllowList.
 // Value is in the following format:
-// resource=[k8s-label-name,another-ks8-label],another-resource[ks8-label]
+// resource=[k8s-label-name,another-k8s-label],another-resource[k8s-label]
 // Example: pods=[app.kubernetes.io/component,app],resource=[blah]
 func (l *LabelsAllowList) Set(value string) error {
 	// Taken from text/scanner EOF constant.

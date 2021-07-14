@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http/httptest"
 	"sort"
 	"strconv"
@@ -67,7 +67,7 @@ func BenchmarkKubeStateMetrics(b *testing.B) {
 	builder.WithSharding(0, 1)
 	builder.WithContext(ctx)
 	builder.WithNamespaces(options.DefaultNamespaces)
-	builder.WithGenerateStoreFunc(builder.DefaultGenerateStoreFunc())
+	builder.WithGenerateStoresFunc(builder.DefaultGenerateStoresFunc())
 
 	l, err := allowdenylist.New(map[string]struct{}{}, map[string]struct{}{})
 	if err != nil {
@@ -132,7 +132,7 @@ func TestFullScrapeCycle(t *testing.T) {
 	builder.WithEnabledResources(options.DefaultResources.AsSlice())
 	builder.WithKubeClient(kubeClient)
 	builder.WithNamespaces(options.DefaultNamespaces)
-	builder.WithGenerateStoreFunc(builder.DefaultGenerateStoreFunc())
+	builder.WithGenerateStoresFunc(builder.DefaultGenerateStoresFunc())
 
 	l, err := allowdenylist.New(map[string]struct{}{}, map[string]struct{}{})
 	if err != nil {
@@ -163,7 +163,7 @@ func TestFullScrapeCycle(t *testing.T) {
 		t.Fatalf("expected 200 status code but got %v", resp.StatusCode)
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 
 	expected := `# HELP kube_pod_completion_time Completion time in unix timestamp for a pod.
 # HELP kube_pod_container_info Information about a container in a pod.
@@ -281,52 +281,16 @@ kube_pod_container_resource_requests{namespace="default",pod="pod0",uid="abc-0",
 kube_pod_container_resource_requests{namespace="default",pod="pod0",uid="abc-0",container="pod1_con1",node="node1",resource="storage",unit="byte"} 4e+08
 kube_pod_container_resource_requests{namespace="default",pod="pod0",uid="abc-0",container="pod1_con2",node="node1",resource="cpu",unit="core"} 0.3
 kube_pod_container_resource_requests{namespace="default",pod="pod0",uid="abc-0",container="pod1_con2",node="node1",resource="memory",unit="byte"} 2e+08
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Completed"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="ContainerCannotRun"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="DeadlineExceeded"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Error"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Evicted"} 0
 kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="OOMKilled"} 1
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Completed"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="ContainerCannotRun"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="DeadlineExceeded"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Error"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Evicted"} 0
-kube_pod_container_status_last_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="OOMKilled"} 0
 kube_pod_container_status_ready{namespace="default",pod="pod0",uid="abc-0",container="container2"} 0
 kube_pod_container_status_ready{namespace="default",pod="pod0",uid="abc-0",container="container3"} 0
 kube_pod_container_status_restarts_total{namespace="default",pod="pod0",uid="abc-0",container="container2"} 0
 kube_pod_container_status_restarts_total{namespace="default",pod="pod0",uid="abc-0",container="container3"} 0
 kube_pod_container_status_running{namespace="default",pod="pod0",uid="abc-0",container="container2"} 0
 kube_pod_container_status_running{namespace="default",pod="pod0",uid="abc-0",container="container3"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Completed"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="ContainerCannotRun"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="DeadlineExceeded"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Error"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="Evicted"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="OOMKilled"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Completed"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="ContainerCannotRun"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="DeadlineExceeded"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Error"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="Evicted"} 0
-kube_pod_container_status_terminated_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="OOMKilled"} 0
 kube_pod_container_status_terminated{namespace="default",pod="pod0",uid="abc-0",container="container2"} 0
 kube_pod_container_status_terminated{namespace="default",pod="pod0",uid="abc-0",container="container3"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="ContainerCreating"} 0
 kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="CrashLoopBackOff"} 1
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="CreateContainerConfigError"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="CreateContainerError"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="ErrImagePull"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="ImagePullBackOff"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container2",reason="InvalidImageName"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="ContainerCreating"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="CrashLoopBackOff"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="CreateContainerConfigError"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="CreateContainerError"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="ErrImagePull"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="ImagePullBackOff"} 0
-kube_pod_container_status_waiting_reason{namespace="default",pod="pod0",uid="abc-0",container="container3",reason="InvalidImageName"} 0
 kube_pod_container_status_waiting{namespace="default",pod="pod0",uid="abc-0",container="container2"} 1
 kube_pod_container_status_waiting{namespace="default",pod="pod0",uid="abc-0",container="container3"} 0
 kube_pod_created{namespace="default",pod="pod0",uid="abc-0"} 1.5e+09
@@ -369,6 +333,54 @@ kube_pod_status_reason{namespace="default",pod="pod0",uid="abc-0",reason="Unexpe
 			t.Fatalf("expected:\n\n%v\n, but got:\n\n%v", expectedSplit[i], gotFiltered[i])
 		}
 	}
+
+	telemetryMux := buildTelemetryServer(reg)
+
+	req2 := httptest.NewRequest("GET", "http://localhost:8081/metrics", nil)
+
+	w2 := httptest.NewRecorder()
+	telemetryMux.ServeHTTP(w2, req2)
+
+	resp2 := w2.Result()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 status code but got %v", resp.StatusCode)
+	}
+
+	body2, _ := io.ReadAll(resp2.Body)
+
+	expected2 := `# HELP kube_state_metrics_shard_ordinal Current sharding ordinal/index of this instance
+# HELP kube_state_metrics_total_shards Number of total shards this instance is aware of
+# TYPE kube_state_metrics_shard_ordinal gauge
+# TYPE kube_state_metrics_total_shards gauge
+kube_state_metrics_shard_ordinal{shard_ordinal="0"} 0
+kube_state_metrics_total_shards 1
+`
+
+	expectedSplit2 := strings.Split(strings.TrimSpace(expected2), "\n")
+	sort.Strings(expectedSplit2)
+
+	gotSplit2 := strings.Split(strings.TrimSpace(string(body2)), "\n")
+
+	gotFiltered2 := []string{}
+	for _, l := range gotSplit2 {
+		if strings.Contains(l, "_shard") {
+			gotFiltered2 = append(gotFiltered2, l)
+		}
+	}
+
+	sort.Strings(gotFiltered2)
+
+	if len(expectedSplit2) != len(gotFiltered2) {
+		fmt.Println(len(expectedSplit2))
+		fmt.Println(len(gotFiltered2))
+		t.Fatalf("expected different output length, expected \n\n%s\n\ngot\n\n%s", expected2, strings.Join(gotFiltered2, "\n"))
+	}
+
+	for i := 0; i < len(expectedSplit2); i++ {
+		if expectedSplit2[i] != gotFiltered2[i] {
+			t.Fatalf("expected:\n\n%v\n, but got:\n\n%v", expectedSplit2[i], gotFiltered2[i])
+		}
+	}
 }
 
 // TestShardingEquivalenceScrapeCycle is a simple smoke test covering the entire cycle from
@@ -400,7 +412,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 	unshardedBuilder.WithNamespaces(options.DefaultNamespaces)
 	unshardedBuilder.WithAllowDenyList(l)
 	unshardedBuilder.WithAllowLabels(map[string][]string{})
-	unshardedBuilder.WithGenerateStoreFunc(unshardedBuilder.DefaultGenerateStoreFunc())
+	unshardedBuilder.WithGenerateStoresFunc(unshardedBuilder.DefaultGenerateStoresFunc())
 
 	unshardedHandler := metricshandler.New(&options.Options{}, kubeClient, unshardedBuilder, false)
 	unshardedHandler.ConfigureSharding(ctx, 0, 1)
@@ -413,7 +425,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 	shardedBuilder1.WithNamespaces(options.DefaultNamespaces)
 	shardedBuilder1.WithAllowDenyList(l)
 	shardedBuilder1.WithAllowLabels(map[string][]string{})
-	shardedBuilder1.WithGenerateStoreFunc(shardedBuilder1.DefaultGenerateStoreFunc())
+	shardedBuilder1.WithGenerateStoresFunc(shardedBuilder1.DefaultGenerateStoresFunc())
 
 	shardedHandler1 := metricshandler.New(&options.Options{}, kubeClient, shardedBuilder1, false)
 	shardedHandler1.ConfigureSharding(ctx, 0, 2)
@@ -426,7 +438,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 	shardedBuilder2.WithNamespaces(options.DefaultNamespaces)
 	shardedBuilder2.WithAllowDenyList(l)
 	shardedBuilder2.WithAllowLabels(map[string][]string{})
-	shardedBuilder2.WithGenerateStoreFunc(shardedBuilder2.DefaultGenerateStoreFunc())
+	shardedBuilder2.WithGenerateStoresFunc(shardedBuilder2.DefaultGenerateStoresFunc())
 
 	shardedHandler2 := metricshandler.New(&options.Options{}, kubeClient, shardedBuilder2, false)
 	shardedHandler2.ConfigureSharding(ctx, 1, 2)
@@ -445,7 +457,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 		t.Fatalf("expected 200 status code but got %v", resp.StatusCode)
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	expected := string(body)
 
 	// sharded requests
@@ -461,7 +473,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 		t.Fatalf("expected 200 status code but got %v", resp.StatusCode)
 	}
 
-	body, _ = ioutil.ReadAll(resp.Body)
+	body, _ = io.ReadAll(resp.Body)
 	got1 := string(body)
 
 	// request second shard
@@ -475,7 +487,7 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 		t.Fatalf("expected 200 status code but got %v", resp.StatusCode)
 	}
 
-	body, _ = ioutil.ReadAll(resp.Body)
+	body, _ = io.ReadAll(resp.Body)
 	got2 := string(body)
 
 	// normalize results:
@@ -522,12 +534,12 @@ func TestShardingEquivalenceScrapeCycle(t *testing.T) {
 		t.Fatal("shard 2 has 0 metrics when it shouldn't")
 	}
 
-	gotFiltered := append(got1Filtered, got2Filtered...)
-	sort.Strings(gotFiltered)
+	got1Filtered = append(got1Filtered, got2Filtered...)
+	sort.Strings(got1Filtered)
 
 	for i := 0; i < len(expectedFiltered); i++ {
 		expected := strings.TrimSpace(expectedFiltered[i])
-		got := strings.TrimSpace(gotFiltered[i])
+		got := strings.TrimSpace(got1Filtered[i])
 		if expected != got {
 			t.Fatalf("\n\nexpected:\n\n%q\n\nbut got:\n\n%q\n\n", expected, got)
 		}
